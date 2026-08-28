@@ -8,10 +8,11 @@ services:
         GID: "${GID:-1000}"
     volumes:
       - .:/workspace
-      - huggingface-cache:/root/.cache/huggingface
+      - huggingface-cache:/home/app/.cache/huggingface
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
       - ENABLE_GPU=false
+      - HF_HOME=/home/app/.cache/huggingface
     depends_on:
       ollama-pull-model:
         condition: service_completed_successfully
@@ -22,6 +23,12 @@ services:
       - "11434:11434"
     volumes:
       - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 2s
 
   ollama-pull-model:
     image: ollama/ollama:latest
@@ -29,7 +36,8 @@ services:
       - OLLAMA_HOST=ollama:11434
     command: ["pull", "LiquidAI/lfm2.5-1.2b-instruct"]
     depends_on:
-      - ollama
+      ollama:
+        condition: service_healthy
 
 volumes:
   ollama-data:
