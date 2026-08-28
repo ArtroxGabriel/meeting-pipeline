@@ -1,8 +1,5 @@
-ARG INSTALL_CUDA=false
-
+# ---------- Stage 1: builder ----------
 FROM python:3.14-slim AS builder
-
-ARG INSTALL_CUDA
 
 # Build-time system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -12,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod a+rx /usr/local/bin/yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 
-# Pin uv to a specific version (not :latest)
+# Pin uv
 COPY --from=ghcr.io/astral-sh/uv:0.7.13 /uv /uvx /bin/
 
 WORKDIR /app
@@ -20,33 +17,24 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
-# Install dependencies first (better layer caching)
+# Install CUDA dependencies with layer caching
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ "$INSTALL_CUDA" = "true" ]; then \
-    uv sync --frozen --no-install-project --no-dev --extra cuda; \
-    else \
-    uv sync --frozen --no-install-project --no-dev; \
-    fi
+    uv sync --frozen --no-install-project --no-dev --extra cuda
 
-# Copy source and install the project itself
+# Copy source and install clerk project with CUDA support & prune unnecessary static libs/headers
 COPY src/ ./src/
 COPY README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ "$INSTALL_CUDA" = "true" ]; then \
     uv sync --frozen --no-dev --extra cuda && \
     find /app/.venv -name "*.a" -delete && \
-    find /app/.venv -name "*.h" -delete; \
-    else \
-    uv sync --frozen --no-dev; \
-    fi && \
+    find /app/.venv -name "*.h" -delete && \
     find /app/.venv -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-
 
 # ---------- Stage 2: runtime ----------
 FROM python:3.14-slim AS runtime
 
-# ffmpeg + ca-certificates are the only runtime system deps needed
+# Runtime system dependencies (ffmpeg for audio normalization)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     ca-certificates \
@@ -55,11 +43,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG UID=1000
 ARG GID=1000
 RUN groupadd -g "$GID" app && \
-    useradd -l -m -u "$UID" -g "$GID" app
+    useradd -l -m -u "$UID" -g "$GID" -d /home/app app && \
+    mkdir -p /home/app/.cache/huggingface /workspace && \
+    chown -R app:app /home/app /workspace && \
+    chmod -R 777 /home/app/.cache
 
 WORKDIR /app
 
-# Bring in only what's needed at runtime — no uv, no curl, no build cache
+# Copy artifacts from builder
 COPY --from=builder /usr/local/bin/yt-dlp /usr/local/bin/yt-dlp
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
@@ -67,12 +58,14 @@ COPY --from=builder /app/README.md /app/README.md
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV LD_LIBRARY_PATH="/app/.venv/lib/python3.14/site-packages/nvidia/cublas/lib:/app/.venv/lib/python3.14/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
+ENV ENABLE_GPU=true
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-# Default directory for mount-based execution
 WORKDIR /workspace
 
 USER app
-LABEL org.opencontainers.image.source "https://github.com/ArtroxGabriel/clerk"
-LABEL org.opencontainers.image.description "Clerk - Local meeting & audio transcription pipeline (faster-whisper + Ollama)"
+LABEL org.opencontainers.image.source="https://github.com/ArtroxGabriel/clerk"
+LABEL org.opencontainers.image.description="Clerk (GPU/CUDA) - Local meeting & audio transcription pipeline"
 
 ENTRYPOINT ["clerk"]

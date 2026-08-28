@@ -3,6 +3,7 @@ services:
     image: ghcr.io/artroxgabriel/clerk:latest
     build:
       context: .
+      dockerfile: Dockerfile.cpu
       args:
         UID: "${UID:-1000}"
         GID: "${GID:-1000}"
