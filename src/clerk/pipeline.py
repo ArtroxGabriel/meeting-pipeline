@@ -83,6 +83,7 @@ def run_pipeline(
     summarize_only: bool = False,
     custom_prompt: str | None = None,
     custom_consolidation_prompt: str | None = None,
+    resume: bool = False,
 ) -> tuple[Path | None, Path | None, dict]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = input_path.stem
@@ -114,6 +115,16 @@ def run_pipeline(
             raise FileNotFoundError(
                 f"Transcript file '{transcript_path}' does not exist. Run transcription first or provide an existing .srt file."
             )
+
+        if resume and summary_path.exists() and summary_path.stat().st_size > 0:
+            logger.info("Summary already exists at %s. Re-run without --resume (-r) to regenerate.", summary_path)
+            existing_meta = {}
+            if metadata_path.exists():
+                try:
+                    existing_meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            return transcript_path, summary_path, existing_meta
 
         t_start = time.perf_counter()
         logger.info("Reading transcript from %s for summarize-only execution...", transcript_path)
@@ -167,33 +178,90 @@ def run_pipeline(
     summary_path = output_dir / summary_filename
     metadata_path = output_dir / f"{stem}_metadata.json"
 
+    if resume and summary_path.exists() and summary_path.stat().st_size > 0:
+        logger.info("Summary already exists at %s. Re-run without --resume (-r) to regenerate.", summary_path)
+        existing_meta = {}
+        if metadata_path.exists():
+            try:
+                existing_meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return transcript_path, summary_path, existing_meta
+
     t_start = time.perf_counter()
+    t_audio = 0.0
+    t_transcribe = 0.0
+    plain_text_transcript: str | None = None
+    srt_transcript: str | None = None
+    metadata: dict = {}
 
-    logger.info("Starting audio extraction from %s...", input_path)
-    t0 = time.perf_counter()
-    normalized_audio = extract_audio(input_path, audio_path)
-    t_audio = time.perf_counter() - t0
-    logger.info("Audio extraction completed in %.2fs", t_audio)
+    if resume and transcript_path.exists() and transcript_path.stat().st_size > 0:
+        logger.info("Reusing existing transcript from %s...", transcript_path)
+        srt_content = transcript_path.read_text(encoding="utf-8")
+        plain_text_transcript = clean_srt_for_prompt(srt_content)
+        srt_transcript = srt_content.strip()
+        if metadata_path.exists():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except Exception:
+                metadata = {}
+    else:
+        if resume and audio_path.exists() and audio_path.stat().st_size > 0:
+            logger.info("Reusing existing normalized audio from %s...", audio_path)
+            normalized_audio = audio_path
+        else:
+            logger.info("Starting audio extraction from %s...", input_path)
+            t0 = time.perf_counter()
+            normalized_audio = extract_audio(input_path, audio_path)
+            t_audio = time.perf_counter() - t0
+            logger.info("Audio extraction completed in %.2fs", t_audio)
 
-    logger.info("Starting transcription...")
-    t0 = time.perf_counter()
-    plain_text_transcript, srt_transcript, metadata = transcribe_file(
-        normalized_audio,
-        model_name=whisper_model,
-        device=whisper_device,
-        compute_type=whisper_compute_type,
-        language=language,
-        batch_size=whisper_batch_size,
-        verbose=verbose,
-    )
-    t_transcribe = time.perf_counter() - t0
-    logger.info("Transcription completed in %.2fs", t_transcribe)
+        logger.info("Starting transcription...")
+        t0 = time.perf_counter()
+        plain_text_transcript, srt_transcript, metadata = transcribe_file(
+            normalized_audio,
+            model_name=whisper_model,
+            device=whisper_device,
+            compute_type=whisper_compute_type,
+            language=language,
+            batch_size=whisper_batch_size,
+            verbose=verbose,
+        )
+        t_transcribe = time.perf_counter() - t0
+        logger.info("Transcription completed in %.2fs", t_transcribe)
+
+        # Write transcript and intermediate metadata ahead of summarization
+        transcript_path.write_text(srt_transcript + "\n", encoding="utf-8")
+        logger.info("Transcript written to %s", transcript_path)
+
+        interim_metadata = _build_pipeline_metadata(
+            language=metadata.get("language", effective_lang),
+            language_probability=metadata.get("language_probability"),
+            duration=float(metadata.get("duration", 0.0)),
+            duration_after_vad=float(metadata.get("duration_after_vad", 0.0)),
+            t_audio=t_audio,
+            t_transcribe=t_transcribe,
+            t_total=time.perf_counter() - t_start,
+            whisper_model=whisper_model,
+            whisper_device=whisper_device,
+            whisper_compute_type=whisper_compute_type,
+            whisper_batch_size=whisper_batch_size,
+            llm_model="in_progress" if not transcribe_only else "skipped",
+            transcript_words=len(plain_text_transcript.split()),
+            summary_words=0,
+            audio_path=audio_path,
+            transcript_path=transcript_path,
+            metadata_path=metadata_path,
+        )
+        metadata_path.write_text(
+            json.dumps(interim_metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
     if transcribe_only:
         t_total = time.perf_counter() - t_start
         logger.info("Transcribe-only execution completed in %.2fs", t_total)
-
-        updated_metadata = _build_pipeline_metadata(
+        final_tx_meta = _build_pipeline_metadata(
             language=metadata.get("language", effective_lang),
             language_probability=metadata.get("language_probability"),
             duration=float(metadata.get("duration", 0.0)),
@@ -212,14 +280,11 @@ def run_pipeline(
             transcript_path=transcript_path,
             metadata_path=metadata_path,
         )
-
-        transcript_path.write_text(srt_transcript + "\n", encoding="utf-8")
         metadata_path.write_text(
-            json.dumps(updated_metadata, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(final_tx_meta, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        logger.info("Transcript written to %s", transcript_path)
-        return transcript_path, None, updated_metadata
+        return transcript_path, None, final_tx_meta
 
     logger.info("Starting summarization...")
     t0 = time.perf_counter()
@@ -246,10 +311,10 @@ def run_pipeline(
         t_transcribe=t_transcribe,
         t_summarize=t_summarize,
         t_total=t_total,
-        whisper_model=whisper_model,
-        whisper_device=whisper_device,
-        whisper_compute_type=whisper_compute_type,
-        whisper_batch_size=whisper_batch_size,
+        whisper_model=whisper_model if whisper_model else str(metadata.get("models", {}).get("whisper_model", "skipped")),
+        whisper_device=whisper_device if whisper_device else str(metadata.get("models", {}).get("whisper_device", "skipped")),
+        whisper_compute_type=whisper_compute_type if whisper_compute_type else str(metadata.get("models", {}).get("whisper_compute_type", "skipped")),
+        whisper_batch_size=whisper_batch_size if whisper_batch_size else int(metadata.get("models", {}).get("whisper_batch_size", 0)),
         llm_model=llm_model,
         transcript_words=len(plain_text_transcript.split()),
         summary_words=len(summary.split()),
@@ -259,14 +324,12 @@ def run_pipeline(
         metadata_path=metadata_path,
     )
 
-    transcript_path.write_text(srt_transcript + "\n", encoding="utf-8")
     summary_path.write_text(summary + "\n", encoding="utf-8")
     metadata_path.write_text(
         json.dumps(updated_metadata, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
 
-    logger.info("Transcript written to %s", transcript_path)
     logger.info("Summary written to %s", summary_path)
 
     return transcript_path, summary_path, updated_metadata

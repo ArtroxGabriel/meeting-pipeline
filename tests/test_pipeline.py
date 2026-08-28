@@ -218,4 +218,143 @@ def test_run_pipeline_summarize_only_missing_srt(tmp_path: Path) -> None:
         )
 
 
+def test_run_pipeline_saves_transcript_ahead_of_summarization_failure(tmp_path: Path) -> None:
+    input_path = tmp_path / "crash_test.mp3"
+    input_path.write_text("audio contents")
+    output_dir = tmp_path / "output"
+
+    mock_metadata = {"language": "pt", "duration": 45.0}
+    mock_srt = "1\n00:00:00,000 --> 00:00:02,000\nAhead transcript"
+
+    with patch("clerk.pipeline.extract_audio", return_value=output_dir / "crash_test_normalized.wav"), \
+         patch("clerk.pipeline.transcribe_file", return_value=("Ahead transcript", mock_srt, mock_metadata)), \
+         patch("clerk.pipeline.summarize_transcript", side_effect=RuntimeError("Ollama crashed")):
+
+        with pytest.raises(RuntimeError, match="Ollama crashed"):
+            run_pipeline(
+                input_path=input_path,
+                output_dir=output_dir,
+                whisper_model="tiny",
+                whisper_device="cpu",
+                whisper_compute_type="int8",
+                llm_model="LiquidAI/lfm2.5-1.2b-instruct",
+                language="pt",
+            )
+
+        # Transcript and interim metadata must have been written ahead of the crash
+        assert (output_dir / "crash_test_transcript.srt").exists()
+        assert (output_dir / "crash_test_transcript.srt").read_text(encoding="utf-8") == mock_srt + "\n"
+        assert (output_dir / "crash_test_metadata.json").exists()
+
+
+def test_run_pipeline_resume_with_existing_transcript(tmp_path: Path) -> None:
+    input_path = tmp_path / "resume_test.mp3"
+    input_path.write_text("audio contents")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    srt_path = output_dir / "resume_test_transcript.srt"
+    srt_path.write_text("1\n00:00:00,000 --> 00:00:02,000\nExisting transcript line", encoding="utf-8")
+
+    with patch("clerk.pipeline.extract_audio") as mock_extract, \
+         patch("clerk.pipeline.transcribe_file") as mock_transcribe, \
+         patch("clerk.pipeline.summarize_transcript", return_value="Resumed summary") as mock_summarize:
+
+        tx_path, sum_path, _ = run_pipeline(
+            input_path=input_path,
+            output_dir=output_dir,
+            whisper_model="tiny",
+            whisper_device="cpu",
+            whisper_compute_type="int8",
+            llm_model="LiquidAI/lfm2.5-1.2b-instruct",
+            language="pt",
+            resume=True,
+        )
+
+        mock_extract.assert_not_called()
+        mock_transcribe.assert_not_called()
+        mock_summarize.assert_called_once_with(
+            transcript="Existing transcript line",
+            model_name="LiquidAI/lfm2.5-1.2b-instruct",
+            language="pt",
+            is_video=False,
+            custom_prompt=None,
+            custom_consolidation_prompt=None,
+        )
+        assert tx_path == srt_path
+        assert sum_path == output_dir / "resume_test_meeting_points.md"
+        assert (output_dir / "resume_test_meeting_points.md").read_text(encoding="utf-8") == "Resumed summary\n"
+
+
+def test_run_pipeline_resume_with_existing_audio(tmp_path: Path) -> None:
+    input_path = tmp_path / "audio_resume.mp3"
+    input_path.write_text("audio contents")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    wav_path = output_dir / "audio_resume_normalized.wav"
+    wav_path.write_bytes(b"RIFF dummy wav data")
+
+    mock_metadata = {"language": "pt", "duration": 50.0}
+    mock_srt = "1\n00:00:00,000 --> 00:00:02,000\nFrom existing wav"
+
+    with patch("clerk.pipeline.extract_audio") as mock_extract, \
+         patch("clerk.pipeline.transcribe_file", return_value=("From existing wav", mock_srt, mock_metadata)) as mock_transcribe, \
+         patch("clerk.pipeline.summarize_transcript", return_value="Audio resumed summary"):
+
+        tx_path, sum_path, _ = run_pipeline(
+            input_path=input_path,
+            output_dir=output_dir,
+            whisper_model="tiny",
+            whisper_device="cpu",
+            whisper_compute_type="int8",
+            llm_model="LiquidAI/lfm2.5-1.2b-instruct",
+            language="pt",
+            resume=True,
+        )
+
+        mock_extract.assert_not_called()
+        mock_transcribe.assert_called_once_with(
+            wav_path,
+            model_name="tiny",
+            device="cpu",
+            compute_type="int8",
+            language="pt",
+            batch_size=2,
+            verbose=False,
+        )
+        assert tx_path == output_dir / "audio_resume_transcript.srt"
+        assert sum_path == output_dir / "audio_resume_meeting_points.md"
+
+
+def test_run_pipeline_resume_with_existing_summary(tmp_path: Path) -> None:
+    input_path = tmp_path / "done_test.mp3"
+    input_path.write_text("audio contents")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    sum_path = output_dir / "done_test_meeting_points.md"
+    sum_path.write_text("Already done summary", encoding="utf-8")
+
+    with patch("clerk.pipeline.extract_audio") as mock_extract, \
+         patch("clerk.pipeline.transcribe_file") as mock_transcribe, \
+         patch("clerk.pipeline.summarize_transcript") as mock_summarize:
+
+        tx_path, res_sum_path, _ = run_pipeline(
+            input_path=input_path,
+            output_dir=output_dir,
+            whisper_model="tiny",
+            whisper_device="cpu",
+            whisper_compute_type="int8",
+            llm_model="LiquidAI/lfm2.5-1.2b-instruct",
+            language="pt",
+            resume=True,
+        )
+
+        mock_extract.assert_not_called()
+        mock_transcribe.assert_not_called()
+        mock_summarize.assert_not_called()
+        assert res_sum_path == sum_path
+
+
 
