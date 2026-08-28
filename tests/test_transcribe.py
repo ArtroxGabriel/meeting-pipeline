@@ -84,7 +84,7 @@ def test_transcribe_success(tmp_path: Path) -> None:
             language="en"
         )
 
-        mock_whisper_class.assert_called_once_with("tiny", device="cpu", compute_type="int8")
+        mock_whisper_class.assert_called_once_with("tiny", device="cpu", compute_type="int8", download_root=None)
         mock_batched_class.assert_called_once_with(model=mock_model_instance)
         mock_batched_instance.transcribe.assert_called_once_with(
             str(audio_path),
@@ -152,6 +152,19 @@ def test_transcribe_gpu_int8_mapping(tmp_path: Path) -> None:
             device="cuda",
             compute_type="int8",
         )
-        mock_whisper_class.assert_called_once_with("small", device="cuda", compute_type="int8_float16")
+        mock_whisper_class.assert_called_once_with("small", device="cuda", compute_type="int8_float16", download_root=None)
+
+
+def test_resolve_download_root_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from clerk.transcribe import _resolve_download_root
+
+    unwritable_dir = tmp_path / "unwritable_hf_cache"
+    unwritable_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HF_HOME", str(unwritable_dir))
+
+    # Mock touch to raise PermissionError
+    with patch("pathlib.Path.touch", side_effect=PermissionError("Permission denied")):
+        fallback = _resolve_download_root()
+        assert fallback == "/tmp/huggingface_cache"
 
 

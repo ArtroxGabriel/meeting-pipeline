@@ -1,0 +1,66 @@
+# ---------- Stage 1: builder ----------
+FROM python:3.14-slim AS builder
+
+# Build-time system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && curl -fL https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pin uv
+COPY --from=ghcr.io/astral-sh/uv:0.7.13 /uv /uvx /bin/
+
+WORKDIR /app
+
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+
+# Install CPU dependencies with layer caching
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
+
+# Copy source and install clerk project
+COPY src/ ./src/
+COPY README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev && \
+    find /app/.venv -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+# ---------- Stage 2: runtime ----------
+FROM python:3.14-slim AS runtime
+
+# Runtime system dependencies (ffmpeg for audio normalization)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG UID=1000
+ARG GID=1000
+RUN groupadd -g "$GID" app && \
+    useradd -l -m -u "$UID" -g "$GID" -d /home/app app && \
+    mkdir -p /home/app/.cache/huggingface /workspace && \
+    chown -R app:app /home/app /workspace && \
+    chmod -R 777 /home/app/.cache
+
+WORKDIR /app
+
+# Copy artifacts from builder
+COPY --from=builder /usr/local/bin/yt-dlp /usr/local/bin/yt-dlp
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/src /app/src
+COPY --from=builder /app/README.md /app/README.md
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV ENABLE_GPU=false
+
+WORKDIR /workspace
+
+USER app
+LABEL org.opencontainers.image.source="https://github.com/ArtroxGabriel/clerk"
+LABEL org.opencontainers.image.description="Clerk (CPU) - Local meeting & audio transcription pipeline"
+
+ENTRYPOINT ["clerk"]

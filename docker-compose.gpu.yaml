@@ -5,8 +5,8 @@ services:
     image: ghcr.io/artroxgabriel/clerk:gpu
     build:
       context: .
+      dockerfile: Dockerfile.gpu
       args:
-        INSTALL_CUDA: "true"
         UID: "${UID:-1000}"
         GID: "${GID:-1000}"
     environment:
@@ -27,3 +27,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  ollama-pull-model:
+    command: ["pull", "llama3.1:8b"]

@@ -5,12 +5,35 @@ from pathlib import Path
 
 from faster_whisper import BatchedInferencePipeline, WhisperModel
 
+import os
+
 logger = logging.getLogger(__name__)
 
 MS_PER_HOUR = 3_600_000
 MS_PER_MINUTE = 60_000
 MS_PER_SECOND = 1000
 DEFAULT_BATCH_SIZE = 2
+
+
+def _resolve_download_root() -> str | None:
+    cache_env = os.environ.get("HF_HOME") or os.environ.get("HUGGINGFACE_HUB_CACHE")
+    target_dir = Path(cache_env) if cache_env else (Path.home() / ".cache" / "huggingface" / "hub")
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        test_file = target_dir / ".permission_check"
+        test_file.touch()
+        test_file.unlink()
+        return None
+    except (PermissionError, OSError) as e:
+        fallback = Path("/tmp/huggingface_cache")
+        fallback.mkdir(parents=True, exist_ok=True)
+        logger.warning(
+            "Cache directory '%s' is not writable (%s). Falling back to '%s'",
+            target_dir,
+            e,
+            fallback,
+        )
+        return str(fallback)
 
 
 def format_timestamp(seconds: float) -> str:
@@ -66,10 +89,12 @@ def transcribe_file(
     if compute_type == "int8" and (device.lower() in ("cuda", "gpu") or device.lower().startswith("cuda")):
         effective_compute_type = "int8_float16"
 
+    download_root = _resolve_download_root()
     model = WhisperModel(
         model_name,
         device=device,
         compute_type=effective_compute_type,
+        download_root=download_root,
     )
     batched_model = BatchedInferencePipeline(model=model)
 
