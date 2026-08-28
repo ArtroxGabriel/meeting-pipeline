@@ -10,10 +10,11 @@
 - **LLM Summarization**: Interfaces with a local Ollama instance (`http://127.0.0.1:11434`) to produce structured Portuguese markdown summaries (`## Pontos principais`, `## Decisões`, `## Ações`, `## Pendências` or video equivalents).
 - **CPU vs GPU Strategy**: Features dedicated prompt strategies (`CpuPromptStrategy` for models like `LiquidAI/lfm2.5-1.2b-instruct`, `GpuPromptStrategy` for models like `llama3.1:8b`, and `CustomPromptStrategy` for custom templates).
 - **Custom Prompt Overrides**: Supports overriding stage 1 summary/chunk prompts (`--prompt` or `--prompt-file`) and stage 2 consolidation prompts (`--consolidation-prompt` or `--consolidation-prompt-file`) with `{transcript}`, `{category}`, `{items}`, and `{language}` placeholder substitution.
-- **Isolated Step Execution**: Supports running only transcription (`--transcribe-only`) or only summarization (`--summarize-only` or passing `.srt` targets directly).
+- **Isolated Step Execution & Resuming**: Supports running only transcription (`--transcribe-only`), only summarization (`--summarize-only` or passing `.srt` targets directly), and resuming previous pipeline progress with `--resume` / `-r` (or forcing regeneration with `--force` / `-f`).
+- **Immediate Step File Persistence**: Saves `.wav`, `.srt`, and interim metadata files to disk immediately after each step completes rather than waiting for pipeline completion, ensuring zero data loss if downstream steps fail.
 - **Smart Sentence Chunking**: Automatically breaks long transcripts (> 2000 words) at sentence and clause boundaries to prevent splitting in the middle of sentences or words.
 - **Security & Prompt Injection Protection**: Strips SRT timestamps and wraps prompts in `<<<TRANSCRIPT>>>` and `<<<ITEMS>>>` delimiters. Automatically sanitizes all `<<<...>>>` delimiter tags from final LLM responses (`clean_llm_output`).
-- **Guard Rails & Model Recovery**: Short-circuits empty, garbled, or noise-only transcripts before making LLM calls (`is_meaningful_transcript`). Provides an interactive CLI recovery menu on pipeline/model errors to change LLM models, Whisper models, compute types, or target devices on the fly without re-downloading media.
+- **Guard Rails & Model Recovery**: Short-circuits empty, garbled, or noise-only transcripts before making LLM calls (`is_meaningful_transcript`). Provides an interactive CLI recovery menu on pipeline/model errors to change LLM models, Whisper models, compute types, or target devices on the fly, automatically resuming from existing intermediate files without re-downloading media or re-transcribing.
 
 # File Structure Overview
 
