@@ -10,7 +10,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".python-version"
-      - "Dockerfile"
+      - "Dockerfile*"
       - "docker-compose*.yaml"
       - ".dockerignore"
       - ".github/workflows/ci.yml"
@@ -22,7 +22,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".python-version"
-      - "Dockerfile"
+      - "Dockerfile*"
       - "docker-compose*.yaml"
       - ".dockerignore"
       - ".github/workflows/ci.yml"
@@ -83,11 +83,11 @@ jobs:
       matrix:
         include:
           - image-type: cpu
-            install-cuda: "false"
+            dockerfile: ./Dockerfile.cpu
             tag-suffix: "cpu"
             is-default: true
           - image-type: gpu
-            install-cuda: "true"
+            dockerfile: ./Dockerfile.gpu
             tag-suffix: "gpu"
             is-default: false
 
@@ -121,10 +121,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
+          file: ${{ matrix.dockerfile }}
           push: true
-          build-args: |
-            INSTALL_CUDA=${{ matrix.install-cuda }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image-type }}
