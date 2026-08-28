@@ -93,6 +93,7 @@ def test_cli_success_local_file(tmp_path: Path) -> None:
             summarize_only=False,
             custom_prompt=None,
             custom_consolidation_prompt=None,
+            resume=False,
         )
 
 
@@ -145,6 +146,7 @@ def test_cli_gpu_flag(tmp_path: Path) -> None:
             summarize_only=False,
             custom_prompt=None,
             custom_consolidation_prompt=None,
+            resume=False,
         )
 
 
@@ -172,6 +174,7 @@ def test_cli_preset_override(tmp_path: Path) -> None:
             summarize_only=False,
             custom_prompt=None,
             custom_consolidation_prompt=None,
+            resume=False,
         )
 
 
@@ -366,6 +369,69 @@ def test_cli_prompt_and_prompt_file_mutually_exclusive(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     assert "Cannot specify both --prompt and --prompt-file options simultaneously" in result.output
+
+
+def test_cli_resume_flag(tmp_path: Path) -> None:
+    input_file = tmp_path / "sample.mp3"
+    input_file.write_text("mock audio content")
+    mock_res_meta = {"timings": {}, "models": {}, "word_counts": {}}
+
+    with patch("clerk.cli.run_pipeline", return_value=(Path("out/transcript.srt"), Path("out/meeting_points.md"), mock_res_meta)) as mock_run:
+        result = runner.invoke(app, ["--target", str(input_file), "--resume"])
+        assert result.exit_code == 0
+        assert mock_run.call_args[1]["resume"] is True
+
+
+def test_cli_force_flag(tmp_path: Path) -> None:
+    input_file = tmp_path / "sample.mp3"
+    input_file.write_text("mock audio content")
+    mock_res_meta = {"timings": {}, "models": {}, "word_counts": {}}
+
+    with patch("clerk.cli.run_pipeline", return_value=(Path("out/transcript.srt"), Path("out/meeting_points.md"), mock_res_meta)) as mock_run:
+        result = runner.invoke(app, ["--target", str(input_file), "-f"])
+        assert result.exit_code == 0
+        assert mock_run.call_args[1]["resume"] is False
+
+
+def test_cli_resume_and_force_mutually_exclusive(tmp_path: Path) -> None:
+    input_file = tmp_path / "sample.mp3"
+    input_file.write_text("mock audio content")
+
+    result = runner.invoke(app, ["--target", str(input_file), "--resume", "--force"])
+    assert result.exit_code == 1
+    assert "Cannot specify both --resume and --force simultaneously" in result.output
+
+
+def test_cli_verbose_configuration_output(tmp_path: Path) -> None:
+    input_file = tmp_path / "sample.mp3"
+    input_file.write_text("mock audio content")
+    mock_res_meta = {"timings": {}, "models": {}, "word_counts": {}}
+
+    with patch("clerk.cli.run_pipeline", return_value=(Path("out/transcript.srt"), Path("out/meeting_points.md"), mock_res_meta)):
+        result = runner.invoke(app, ["--target", str(input_file), "--verbose", "--resume"])
+        assert result.exit_code == 0
+        clean_out = _clean_output(result.output)
+        assert "--- Configuration ---" in clean_out
+        assert "Target:" in clean_out
+        assert "Resume: True" in clean_out
+        assert "Force: False" in clean_out
+
+
+def test_cli_recovery_retries_with_resume(tmp_path: Path) -> None:
+    input_file = tmp_path / "sample.mp3"
+    input_file.write_text("mock audio content")
+    mock_res_meta = {"timings": {}, "models": {}, "word_counts": {}}
+
+    side_effects = [RuntimeError("summarization failed"), (Path("out/transcript.srt"), Path("out/meeting_points.md"), mock_res_meta)]
+    with patch("clerk.cli.run_pipeline", side_effect=side_effects) as mock_run, \
+         patch("clerk.cli._prompt_pipeline_recovery", return_value=("new-llm", "tiny", "int8", "cpu", True)):
+        result = runner.invoke(app, ["--target", str(input_file)])
+        assert result.exit_code == 0
+        assert mock_run.call_count == 2
+        # First attempt: resume=False
+        assert mock_run.call_args_list[0][1]["resume"] is False
+        # Retry attempt: resume=True
+        assert mock_run.call_args_list[1][1]["resume"] is True
 
 
 

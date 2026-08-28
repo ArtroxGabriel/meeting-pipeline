@@ -114,10 +114,11 @@ uv run clerk --target <path_or_youtube_url> [OPTIONS]
 | `--whisper-device` | `str` | *(preset)* | Compute device (`cpu` or `cuda`) |
 | `--whisper-compute-type` | `str` | *(preset)* | Quantization (`int8`, `float16`) |
 | `--llm-model` | `str` | *(preset)* | Ollama model name |
-| `--language` | `str` | `pt` | Language code for transcription |
+| `--resume`, `-r` | `flag` | `False` | Reuse existing intermediate files (`.wav` / `.srt` / summary) |
+| `--force`, `-f` | `flag` | `False` | Force re-generation of all pipeline steps from scratch |
 | `--video` | `flag` | `False` | Enforce video summary prompt template (saves summary to `<stem>_resume.md`) |
 | `--meeting` | `flag` | `False` | Enforce meeting summary prompt template (saves summary to `<stem>_meeting_points.md`) |
-| `--verbose` | `flag` | `False` | Enable detailed step timing logs |
+| `--verbose` | `flag` | `False` | Enable detailed configuration and step timing logs |
 
 ### ⚡ Isolated Step Execution
 

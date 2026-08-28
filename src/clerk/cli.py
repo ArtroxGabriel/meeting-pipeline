@@ -268,6 +268,18 @@ def main(
         "--consolidation-prompt-file",
         help="Path to custom consolidation prompt template file.",
     ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        "-r",
+        help="Reuse existing intermediate files (.wav / .srt / summary) if available.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force re-generation of all pipeline steps.",
+    ),
     verbose: bool = typer.Option(False, "--verbose"),
 ) -> None:
     configure_logging(verbose)
@@ -276,6 +288,10 @@ def main(
         typer.echo("Error: --target cannot be empty.", err=True)
         raise typer.Exit(code=EXIT_ERROR)
     target = target.strip()
+
+    if resume and force:
+        typer.echo("Error: Cannot specify both --resume and --force simultaneously.", err=True)
+        raise typer.Exit(code=EXIT_ERROR)
 
     if video and meeting:
         typer.echo("Error: Cannot specify both --video and --meeting options simultaneously.", err=True)
@@ -445,7 +461,47 @@ def main(
     else:
         is_video = is_url
 
+    if verbose:
+        typer.echo("\n--- Configuration ---")
+        typer.echo(f"  Target: {target}")
+        typer.echo(f"  Output Dir: {output_dir}")
+        typer.echo(f"  Preset: {selected_preset}")
+        typer.echo(f"  Whisper Model: {effective_whisper_model}")
+        typer.echo(f"  Whisper Device: {effective_whisper_device}")
+        typer.echo(f"  Whisper Compute Type: {effective_whisper_compute_type}")
+        typer.echo(f"  Whisper Batch Size: {effective_whisper_batch_size}")
+        typer.echo(f"  LLM Model: {effective_llm_model}")
+        typer.echo(f"  Language: {language}")
+        typer.echo(f"  Mode: {'Video' if is_video else 'Meeting'}")
+        typer.echo(f"  Resume: {resume}")
+        typer.echo(f"  Force: {force}")
+        if transcribe_only:
+            typer.echo("  Step: Transcribe Only")
+        elif summarize_only:
+            typer.echo("  Step: Summarize Only")
+        typer.echo("---------------------\n")
+        logger.debug(
+            "Resolved config: target=%s, output_dir=%s, preset=%s, whisper_model=%s, whisper_device=%s, "
+            "whisper_compute_type=%s, whisper_batch_size=%d, llm_model=%s, language=%s, is_video=%s, "
+            "resume=%s, force=%s, transcribe_only=%s, summarize_only=%s",
+            target,
+            output_dir,
+            selected_preset,
+            effective_whisper_model,
+            effective_whisper_device,
+            effective_whisper_compute_type,
+            effective_whisper_batch_size,
+            effective_llm_model,
+            language,
+            is_video,
+            resume,
+            force,
+            transcribe_only,
+            summarize_only,
+        )
+
     temp_file: Path | None = None
+    effective_resume = resume
 
     try:
         if is_url:
@@ -474,6 +530,7 @@ def main(
                     summarize_only=summarize_only,
                     custom_prompt=effective_custom_prompt,
                     custom_consolidation_prompt=effective_custom_consolidation_prompt,
+                    resume=effective_resume,
                 )
                 break
 
@@ -495,6 +552,7 @@ def main(
                     current_device=effective_whisper_device,
                 )
                 if retry:
+                    effective_resume = True
                     continue
                 logger.exception("Pipeline execution failed")
                 raise typer.Exit(code=EXIT_ERROR)
