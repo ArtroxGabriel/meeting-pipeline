@@ -189,3 +189,31 @@ def test_unload_ollama_model_handles_exception() -> None:
         unload_ollama_model("test_model", "http://localhost:11434")
 
 
+def test_summarize_connection_error() -> None:
+    import httpx
+
+    mock_client = MagicMock()
+    mock_client.post.side_effect = httpx.ConnectError("Connection refused")
+    mock_client.__enter__.return_value = mock_client
+
+    with patch("httpx.Client", return_value=mock_client):
+        with pytest.raises(RuntimeError, match="Ensure Ollama is running"):
+            summarize_transcript("This is a valid meeting transcript with content")
+
+
+def test_summarize_auto_pull_offline_failure() -> None:
+    import httpx
+
+    not_found_resp = MagicMock()
+    not_found_resp.status_code = 404
+    not_found_resp.text = "model not found"
+
+    mock_client = MagicMock()
+    mock_client.post.side_effect = [not_found_resp, httpx.ConnectError("Network unreachable")]
+    mock_client.__enter__.return_value = mock_client
+
+    with patch("httpx.Client", return_value=mock_client):
+        with pytest.raises(RuntimeError, match="cannot be pulled while offline"):
+            summarize_transcript("This is a valid meeting transcript with content")
+
+

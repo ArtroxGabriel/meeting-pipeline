@@ -100,7 +100,7 @@ def run_pipeline(
 ) -> tuple[Path | None, Path | None, dict]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = input_path.stem
-    effective_lang = language or "pt"
+    is_auto_lang = language is None or language.lower() == "auto"
 
     if summarize_only:
         base_stem = stem[:-11] if stem.endswith("_transcript") else stem
@@ -133,13 +133,16 @@ def run_pipeline(
             logger.info("Summary already exists at %s. Re-run without --resume (-r) to regenerate.", summary_path)
             return transcript_path, summary_path, _read_json_safe(metadata_path)
 
+        existing_meta = _read_json_safe(metadata_path)
+        effective_lang = (existing_meta.get("language") or "pt") if is_auto_lang else (language or "pt")
+
         t_start = time.perf_counter()
         logger.info("Reading transcript from %s for summarize-only execution...", transcript_path)
         raw_content = transcript_path.read_text(encoding="utf-8")
         is_srt = transcript_path.suffix.lower() == ".srt"
         plain_text_transcript = clean_srt_for_prompt(raw_content) if is_srt else raw_content.strip()
 
-        logger.info("Starting summarization...")
+        logger.info("Starting summarization in %s...", effective_lang)
         t0 = time.perf_counter()
         summary = summarize_transcript(
             transcript=plain_text_transcript,
@@ -192,6 +195,7 @@ def run_pipeline(
     plain_text_transcript: str | None = None
     srt_transcript: str | None = None
     metadata: dict = {}
+    effective_lang = language or "pt"
 
     if resume and transcript_path.exists() and transcript_path.stat().st_size > 0:
         logger.info("Reusing existing transcript from %s...", transcript_path)
@@ -199,6 +203,8 @@ def run_pipeline(
         plain_text_transcript = clean_srt_for_prompt(srt_content)
         srt_transcript = srt_content.strip()
         metadata = _read_json_safe(metadata_path)
+        if is_auto_lang and metadata.get("language"):
+            effective_lang = metadata["language"]
     else:
         if resume and audio_path.exists() and audio_path.stat().st_size > 0:
             logger.info("Reusing existing normalized audio from %s...", audio_path)
@@ -223,6 +229,9 @@ def run_pipeline(
         )
         t_transcribe = time.perf_counter() - t0
         logger.info("Transcription completed in %.2fs", t_transcribe)
+
+        if is_auto_lang and metadata.get("language"):
+            effective_lang = metadata["language"]
 
         # Write transcript and intermediate metadata ahead of summarization
         transcript_path.write_text(srt_transcript + "\n", encoding="utf-8")
@@ -274,7 +283,7 @@ def run_pipeline(
         _save_json(metadata_path, final_tx_meta)
         return transcript_path, None, final_tx_meta
 
-    logger.info("Starting summarization...")
+    logger.info("Starting summarization in %s...", effective_lang)
     t0 = time.perf_counter()
     summary = summarize_transcript(
         transcript=plain_text_transcript,

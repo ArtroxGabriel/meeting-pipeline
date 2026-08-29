@@ -357,4 +357,39 @@ def test_run_pipeline_resume_with_existing_summary(tmp_path: Path) -> None:
         assert res_sum_path == sum_path
 
 
+def test_run_pipeline_auto_language_alignment(tmp_path: Path) -> None:
+    input_path = tmp_path / "english_talk.mp3"
+    input_path.write_text("english audio")
+    output_dir = tmp_path / "output"
+
+    # Whisper detects English
+    mock_metadata = {"language": "en", "language_probability": 0.99, "duration": 40.0}
+    mock_srt = "1\n00:00:00,000 --> 00:00:02,000\nHello English talk"
+
+    with patch("clerk.pipeline.extract_audio", return_value=output_dir / "english_talk_normalized.wav"), \
+         patch("clerk.pipeline.transcribe_file", return_value=("Hello English talk", mock_srt, mock_metadata)), \
+         patch("clerk.pipeline.summarize_transcript", return_value="English summary") as mock_summarize:
+
+        tx_path, sum_path, metadata_res = run_pipeline(
+            input_path=input_path,
+            output_dir=output_dir,
+            whisper_model="tiny",
+            whisper_device="cpu",
+            whisper_compute_type="int8",
+            llm_model="LiquidAI/lfm2.5-1.2b-instruct",
+            language="auto",
+        )
+
+        # Summarizer must have been called with detected language 'en'
+        mock_summarize.assert_called_once_with(
+            transcript="Hello English talk",
+            model_name="LiquidAI/lfm2.5-1.2b-instruct",
+            language="en",
+            is_video=False,
+            custom_prompt=None,
+            custom_consolidation_prompt=None,
+        )
+        assert metadata_res["language"] == "en"
+
+
 
