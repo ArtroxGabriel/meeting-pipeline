@@ -9,9 +9,6 @@ import os
 
 logger = logging.getLogger(__name__)
 
-MS_PER_HOUR = 3_600_000
-MS_PER_MINUTE = 60_000
-MS_PER_SECOND = 1000
 DEFAULT_BATCH_SIZE = 2
 
 
@@ -37,11 +34,11 @@ def _resolve_download_root() -> str | None:
 
 
 def format_timestamp(seconds: float) -> str:
-    total_ms = round(seconds * MS_PER_SECOND)
-    hours, remainder = divmod(total_ms, MS_PER_HOUR)
-    minutes, remainder = divmod(remainder, MS_PER_MINUTE)
-    secs, ms = divmod(remainder, MS_PER_SECOND)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
+    total_ms = round(seconds * 1000)
+    hours, rem = divmod(total_ms, 3_600_000)
+    mins, rem = divmod(rem, 60_000)
+    secs, ms = divmod(rem, 1000)
+    return f"{hours:02d}:{mins:02d}:{secs:02d},{ms:03d}"
 
 
 def segments_to_srt(segments: list) -> tuple[str, str]:
