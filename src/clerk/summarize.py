@@ -100,12 +100,7 @@ def split_transcript_smart(
     return chunks
 
 
-def split_transcript_by_words(
-    transcript: str,
-    max_words: int = DEFAULT_MAX_WORDS_PER_CHUNK,
-) -> list[str]:
-    """Boundary-aware sentence/clause chunking strategy wrapper."""
-    return split_transcript_smart(transcript, max_words=max_words)
+split_transcript_by_words = split_transcript_smart
 
 
 @dataclass(frozen=True)
@@ -114,27 +109,22 @@ class SummaryConfig:
     primary_section: str
 
 
+VIDEO_CONFIG = SummaryConfig(
+    sections=["Resumo geral", "Principais tópicos", "Momentos importantes", "Conclusões ou mensagens finais"],
+    primary_section="Resumo geral",
+)
+MEETING_CONFIG = SummaryConfig(
+    sections=["Pontos principais", "Decisões", "Ações", "Pendências"],
+    primary_section="Pontos principais",
+)
+
+
 def get_summary_config(is_video: bool) -> SummaryConfig:
-    if is_video:
-        return SummaryConfig(
-            sections=[
-                "Resumo geral",
-                "Principais tópicos",
-                "Momentos importantes",
-                "Conclusões ou mensagens finais",
-            ],
-            primary_section="Resumo geral",
-        )
-    return SummaryConfig(
-        sections=["Pontos principais", "Decisões", "Ações", "Pendências"],
-        primary_section="Pontos principais",
-    )
+    return VIDEO_CONFIG if is_video else MEETING_CONFIG
 
 
 def format_empty_fallback(section: str, primary_section: str) -> str:
-    if section == primary_section:
-        return f"- Nenhum {section.lower()} registrado."
-    return "- Nenhuma registrada."
+    return f"- Nenhum {section.lower()} registrado." if section == primary_section else "- Nenhuma registrada."
 
 
 def unload_ollama_model(

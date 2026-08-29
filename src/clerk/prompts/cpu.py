@@ -1,7 +1,7 @@
-from __future__ import annotations
+from .base import BasePromptStrategy
 
 
-class CpuPromptStrategy:
+class CpuPromptStrategy(BasePromptStrategy):
     """Compact, direct prompt strategy optimized for CPU/small models (e.g. LiquidAI/lfm2.5)."""
 
     MEETING_PROMPT = """You are extracting a factual summary from a meeting transcript. Follow every rule below exactly.
@@ -71,10 +71,3 @@ Items to consolidate:
 <<<ITEMS>>>
 {items}
 <<<END ITEMS>>>""".strip()
-
-    def build_summary_prompt(self, transcript: str, language: str, is_video: bool) -> str:
-        template = self.VIDEO_PROMPT if is_video else self.MEETING_PROMPT
-        return template.format(transcript=transcript, language=language)
-
-    def build_consolidation_prompt(self, category: str, items: str, language: str) -> str:
-        return self.CONSOLIDATE_PROMPT.format(category=category, items=items, language=language)

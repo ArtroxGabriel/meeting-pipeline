@@ -68,6 +68,19 @@ def _build_pipeline_metadata(
     }
 
 
+def _save_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _read_json_safe(path: Path) -> dict:
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
 def run_pipeline(
     input_path: Path,
     output_dir: Path,
@@ -118,13 +131,7 @@ def run_pipeline(
 
         if resume and summary_path.exists() and summary_path.stat().st_size > 0:
             logger.info("Summary already exists at %s. Re-run without --resume (-r) to regenerate.", summary_path)
-            existing_meta = {}
-            if metadata_path.exists():
-                try:
-                    existing_meta = json.loads(metadata_path.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
-            return transcript_path, summary_path, existing_meta
+            return transcript_path, summary_path, _read_json_safe(metadata_path)
 
         t_start = time.perf_counter()
         logger.info("Reading transcript from %s for summarize-only execution...", transcript_path)
@@ -165,10 +172,7 @@ def run_pipeline(
         )
 
         summary_path.write_text(summary + "\n", encoding="utf-8")
-        metadata_path.write_text(
-            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        _save_json(metadata_path, metadata)
         logger.info("Summary written to %s", summary_path)
         return transcript_path, summary_path, metadata
 
@@ -180,13 +184,7 @@ def run_pipeline(
 
     if resume and summary_path.exists() and summary_path.stat().st_size > 0:
         logger.info("Summary already exists at %s. Re-run without --resume (-r) to regenerate.", summary_path)
-        existing_meta = {}
-        if metadata_path.exists():
-            try:
-                existing_meta = json.loads(metadata_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-        return transcript_path, summary_path, existing_meta
+        return transcript_path, summary_path, _read_json_safe(metadata_path)
 
     t_start = time.perf_counter()
     t_audio = 0.0
@@ -200,11 +198,7 @@ def run_pipeline(
         srt_content = transcript_path.read_text(encoding="utf-8")
         plain_text_transcript = clean_srt_for_prompt(srt_content)
         srt_transcript = srt_content.strip()
-        if metadata_path.exists():
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            except Exception:
-                metadata = {}
+        metadata = _read_json_safe(metadata_path)
     else:
         if resume and audio_path.exists() and audio_path.stat().st_size > 0:
             logger.info("Reusing existing normalized audio from %s...", audio_path)
@@ -253,10 +247,7 @@ def run_pipeline(
             transcript_path=transcript_path,
             metadata_path=metadata_path,
         )
-        metadata_path.write_text(
-            json.dumps(interim_metadata, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        _save_json(metadata_path, interim_metadata)
 
     if transcribe_only:
         t_total = time.perf_counter() - t_start
@@ -280,10 +271,7 @@ def run_pipeline(
             transcript_path=transcript_path,
             metadata_path=metadata_path,
         )
-        metadata_path.write_text(
-            json.dumps(final_tx_meta, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        _save_json(metadata_path, final_tx_meta)
         return transcript_path, None, final_tx_meta
 
     logger.info("Starting summarization...")
@@ -325,10 +313,7 @@ def run_pipeline(
     )
 
     summary_path.write_text(summary + "\n", encoding="utf-8")
-    metadata_path.write_text(
-        json.dumps(updated_metadata, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    _save_json(metadata_path, updated_metadata)
 
     logger.info("Summary written to %s", summary_path)
 

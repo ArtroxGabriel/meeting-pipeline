@@ -97,13 +97,6 @@ def extract_audio(input_path: Path, output_path: Path) -> Path:
         logger.error("Permission denied creating output directory %s: %s", output_path.parent, e)
         raise PermissionError(f"Permission denied creating directory {output_path.parent}. Check write permissions.") from e
 
-    if output_path.exists():
-        try:
-            output_path.unlink()
-        except PermissionError as e:
-            logger.error("Permission denied removing existing output file %s: %s", output_path, e)
-            raise PermissionError(f"Permission denied modifying {output_path}. Check file write permissions.") from e
-
     command = [
         "ffmpeg",
         "-y",

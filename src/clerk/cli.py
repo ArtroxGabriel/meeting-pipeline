@@ -33,13 +33,6 @@ PRESETS: dict[str, dict[str, str | int]] = {
         "whisper_batch_size": 8,
         "llm_model": "llama3.1:8b",
     },
-    "cuda": {
-        "whisper_model": "large-v3",
-        "whisper_device": "cuda",
-        "whisper_compute_type": "float16",
-        "whisper_batch_size": 8,
-        "llm_model": "llama3.1:8b",
-    },
     "accurate": {
         "whisper_model": "large-v3",
         "whisper_device": "cuda",
@@ -48,6 +41,7 @@ PRESETS: dict[str, dict[str, str | int]] = {
         "llm_model": "llama3.1:8b",
     },
 }
+PRESETS["cuda"] = PRESETS["gpu"]
 
 EXIT_SUCCESS = 0
 EXIT_ERROR = 1
@@ -56,10 +50,6 @@ EXIT_INTERRUPTED = 130
 GPU_PRESETS = {"gpu", "cuda", "accurate"}
 VALID_COMPUTE_TYPES = {"int8", "int8_float16", "int8_bfloat16", "int8_float32", "float16", "bfloat16", "float32", "default"}
 VALID_DEVICES = {"cpu", "cuda", "gpu", "auto"}
-
-CS_PER_HOUR = 360_000
-CS_PER_MINUTE = 6_000
-CS_PER_SECOND = 100
 
 
 def is_gpu_available() -> bool:
@@ -87,11 +77,11 @@ def configure_logging(verbose: bool) -> None:
 
 
 def format_time_hhmmssmm(seconds: float) -> str:
-    total_cs = round(seconds * CS_PER_SECOND)
-    hours, remainder = divmod(total_cs, CS_PER_HOUR)
-    minutes, remainder = divmod(remainder, CS_PER_MINUTE)
-    secs, cs = divmod(remainder, CS_PER_SECOND)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}:{cs:02d}"
+    total_cs = round(seconds * 100)
+    hours, rem = divmod(total_cs, 360_000)
+    mins, rem = divmod(rem, 6000)
+    secs, cs = divmod(rem, 100)
+    return f"{hours:02d}:{mins:02d}:{secs:02d}:{cs:02d}"
 
 
 def print_pipeline_status(
@@ -201,9 +191,23 @@ def _prompt_pipeline_recovery(
     return current_llm, current_whisper, current_compute, current_device, False
 
 
+def _resolve_prompt_option(text: str | None, path: Path | None, opt_name: str) -> str | None:
+    if text and path:
+        typer.echo(f"Error: Cannot specify both --{opt_name} and --{opt_name}-file options simultaneously.", err=True)
+        raise typer.Exit(code=EXIT_ERROR)
+    if not path:
+        return text
+    if not path.exists():
+        typer.echo(f"Error: Prompt file does not exist: {path}", err=True)
+        raise typer.Exit(code=EXIT_ERROR)
+    if not path.is_file():
+        typer.echo(f"Error: Prompt file path is not a file: {path}", err=True)
+        raise typer.Exit(code=EXIT_ERROR)
+    return path.read_text(encoding="utf-8")
+
+
 @app.command()
 def main(
-
     target: str = typer.Option(
         ...,
         "--target",
@@ -305,37 +309,10 @@ def main(
         typer.echo("Error: Cannot specify both --transcribe-only and --summarize-only options simultaneously.", err=True)
         raise typer.Exit(code=EXIT_ERROR)
 
-    if prompt and prompt_file:
-        typer.echo("Error: Cannot specify both --prompt and --prompt-file options simultaneously.", err=True)
-        raise typer.Exit(code=EXIT_ERROR)
-
-    if consolidation_prompt and consolidation_prompt_file:
-        typer.echo("Error: Cannot specify both --consolidation-prompt and --consolidation-prompt-file options simultaneously.", err=True)
-        raise typer.Exit(code=EXIT_ERROR)
-
-    effective_custom_prompt: str | None = None
-    if prompt_file:
-        if not prompt_file.exists():
-            typer.echo(f"Error: Prompt file does not exist: {prompt_file}", err=True)
-            raise typer.Exit(code=EXIT_ERROR)
-        if not prompt_file.is_file():
-            typer.echo(f"Error: Prompt file path is not a file: {prompt_file}", err=True)
-            raise typer.Exit(code=EXIT_ERROR)
-        effective_custom_prompt = prompt_file.read_text(encoding="utf-8")
-    elif prompt:
-        effective_custom_prompt = prompt
-
-    effective_custom_consolidation_prompt: str | None = None
-    if consolidation_prompt_file:
-        if not consolidation_prompt_file.exists():
-            typer.echo(f"Error: Consolidation prompt file does not exist: {consolidation_prompt_file}", err=True)
-            raise typer.Exit(code=EXIT_ERROR)
-        if not consolidation_prompt_file.is_file():
-            typer.echo(f"Error: Consolidation prompt file path is not a file: {consolidation_prompt_file}", err=True)
-            raise typer.Exit(code=EXIT_ERROR)
-        effective_custom_consolidation_prompt = consolidation_prompt_file.read_text(encoding="utf-8")
-    elif consolidation_prompt:
-        effective_custom_consolidation_prompt = consolidation_prompt
+    effective_custom_prompt = _resolve_prompt_option(prompt, prompt_file, "prompt")
+    effective_custom_consolidation_prompt = _resolve_prompt_option(
+        consolidation_prompt, consolidation_prompt_file, "consolidation-prompt"
+    )
 
 
     gpu_supported = is_gpu_available()
