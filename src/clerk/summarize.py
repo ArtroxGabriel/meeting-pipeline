@@ -23,7 +23,9 @@ DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_TIMEOUT_SECONDS = 300.0
 UNLOAD_TIMEOUT_SECONDS = 10.0
 PULL_TIMEOUT_SECONDS = 600.0
-DEFAULT_MAX_WORDS_PER_CHUNK = 2000
+DEFAULT_CPU_MAX_WORDS_PER_CHUNK = 3000
+DEFAULT_GPU_MAX_WORDS_PER_CHUNK = 4500
+DEFAULT_MAX_WORDS_PER_CHUNK = DEFAULT_CPU_MAX_WORDS_PER_CHUNK
 
 
 def split_transcript_smart(
@@ -247,7 +249,7 @@ def summarize_transcript(
     model_name: str = DEFAULT_LLM_MODEL,
     base_url: str | None = None,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
-    max_words_per_chunk: int = DEFAULT_MAX_WORDS_PER_CHUNK,
+    max_words_per_chunk: int | None = None,
     language: str = "pt",
     is_video: bool = False,
     is_gpu_model: bool = False,
@@ -271,16 +273,21 @@ def summarize_transcript(
         if "llama3" in lower_m or "gpu" in lower_m or "cuda" in lower_m or "8b" in lower_m:
             is_gpu_model = True
 
+    effective_max_words = (
+        max_words_per_chunk
+        if max_words_per_chunk is not None
+        else (DEFAULT_GPU_MAX_WORDS_PER_CHUNK if is_gpu_model else DEFAULT_CPU_MAX_WORDS_PER_CHUNK)
+    )
+
     prompt_strategy = PromptManager.get_strategy(
         is_gpu_model=is_gpu_model,
         custom_prompt=custom_prompt,
         custom_consolidation_prompt=custom_consolidation_prompt,
     )
 
-
     words = cleaned_transcript.split()
     try:
-        if len(words) <= max_words_per_chunk:
+        if len(words) <= effective_max_words:
             prompt = prompt_strategy.build_summary_prompt(
                 transcript=cleaned_transcript,
                 language=lang_name,
@@ -300,9 +307,9 @@ def summarize_transcript(
         logger.info(
             "Transcript length (%d words) exceeds chunk size (%d words). Processing in chunks...",
             len(words),
-            max_words_per_chunk,
+            effective_max_words,
         )
-        chunks = split_transcript_smart(cleaned_transcript, max_words_per_chunk)
+        chunks = split_transcript_smart(cleaned_transcript, effective_max_words)
 
         combined_sections: dict[str, list[str]] = {sec: [] for sec in config.sections}
 
@@ -327,29 +334,63 @@ def summarize_transcript(
 
         logger.info("Consolidating section summaries...")
         consolidated_summaries: dict[str, str] = {}
+
+        # 1. Zero-item and single-item bypass (0 LLM calls)
+        sections_needing_consolidation: dict[str, list[str]] = {}
         for sec, items in combined_sections.items():
             if not items:
                 consolidated_summaries[sec] = format_empty_fallback(sec, config.primary_section)
-                continue
+            elif len(items) == 1:
+                consolidated_summaries[sec] = f"- {items[0]}"
+            else:
+                sections_needing_consolidation[sec] = items
 
-            items_text = "\n".join(f"- {item}" for item in items)
-            prompt = prompt_strategy.build_consolidation_prompt(
-                category=sec,
-                items=items_text,
-                language=lang_name,
-            )
-
-            consolidated_content = _call_ollama_generate(
-                prompt=prompt,
-                model_name=model_name,
-                base_url=base_url,
-                timeout_seconds=timeout_seconds,
-            )
-
-            if not consolidated_content:
-                consolidated_content = format_empty_fallback(sec, config.primary_section)
-
-            consolidated_summaries[sec] = consolidated_content
+        # 2. Consolidate sections with multiple items
+        if sections_needing_consolidation:
+            if (
+                is_gpu_model
+                and not custom_consolidation_prompt
+                and len(sections_needing_consolidation) > 1
+                and hasattr(prompt_strategy, "build_multi_consolidation_prompt")
+            ):
+                logger.info("Running unified GPU multi-category consolidation...")
+                multi_prompt = prompt_strategy.build_multi_consolidation_prompt(
+                    items_by_section=sections_needing_consolidation,
+                    language=lang_name,
+                )
+                multi_content = _call_ollama_generate(
+                    prompt=multi_prompt,
+                    model_name=model_name,
+                    base_url=base_url,
+                    timeout_seconds=timeout_seconds,
+                )
+                if multi_content:
+                    parsed_multi = parse_summary_sections(multi_content, is_video=is_video)
+                    for sec, items in sections_needing_consolidation.items():
+                        if parsed_multi.get(sec):
+                            consolidated_summaries[sec] = "\n".join(f"- {item}" for item in parsed_multi[sec])
+                        else:
+                            consolidated_summaries[sec] = "\n".join(f"- {item}" for item in items)
+                else:
+                    for sec, items in sections_needing_consolidation.items():
+                        consolidated_summaries[sec] = "\n".join(f"- {item}" for item in items)
+            else:
+                for sec, items in sections_needing_consolidation.items():
+                    items_text = "\n".join(f"- {item}" for item in items)
+                    prompt = prompt_strategy.build_consolidation_prompt(
+                        category=sec,
+                        items=items_text,
+                        language=lang_name,
+                    )
+                    consolidated_content = _call_ollama_generate(
+                        prompt=prompt,
+                        model_name=model_name,
+                        base_url=base_url,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    if not consolidated_content:
+                        consolidated_content = "\n".join(f"- {item}" for item in items)
+                    consolidated_summaries[sec] = consolidated_content
 
         final_parts = [f"## {sec}\n{consolidated_summaries[sec]}" for sec in config.sections]
         return "\n\n".join(final_parts).strip()
