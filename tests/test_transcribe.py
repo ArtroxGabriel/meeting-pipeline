@@ -168,3 +168,23 @@ def test_resolve_download_root_fallback(monkeypatch: pytest.MonkeyPatch, tmp_pat
         assert fallback == "/tmp/huggingface_cache"
 
 
+def test_transcribe_auto_language(tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_text("audio raw data")
+
+    mock_segment = MagicMock(start=0.0, end=1.0, text="Auto detected lang text.")
+    mock_info = MagicMock(language="es", language_probability=0.95, duration=2.0, duration_after_vad=2.0)
+
+    mock_model_instance = MagicMock()
+    mock_batched_instance = MagicMock()
+    mock_batched_instance.transcribe.return_value = ([mock_segment], mock_info)
+
+    with patch("clerk.transcribe.WhisperModel", return_value=mock_model_instance), \
+         patch("clerk.transcribe.BatchedInferencePipeline", return_value=mock_batched_instance):
+        plain_text, srt_text, metadata = transcribe_file(audio_path, language="auto")
+        assert metadata["language"] == "es"
+        # Language should have been passed as None to Whisper transcribe call
+        mock_batched_instance.transcribe.assert_called_once()
+        assert mock_batched_instance.transcribe.call_args[1]["language"] is None
+
+

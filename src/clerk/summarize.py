@@ -200,23 +200,46 @@ def _call_ollama_generate(
         "stream": False,
     }
 
-    with httpx.Client(base_url=base_url, timeout=timeout_seconds) as client:
-        response = client.post("/api/generate", json=payload)
+    try:
+        with httpx.Client(base_url=base_url, timeout=timeout_seconds) as client:
+            response = client.post("/api/generate", json=payload)
 
-        if response.status_code != 200 and ("not found" in response.text.lower() or response.status_code == 404):
-            logger.info("Model '%s' not found locally in Ollama. Attempting automatic model pull...", model_name)
-            pull_resp = client.post("/api/pull", json={"name": model_name, "stream": False}, timeout=PULL_TIMEOUT_SECONDS)
-            if pull_resp.status_code == 200:
-                logger.info("Model '%s' successfully pulled. Resuming generation...", model_name)
-                response = client.post("/api/generate", json=payload)
+            if response.status_code != 200 and ("not found" in response.text.lower() or response.status_code == 404):
+                logger.info("Model '%s' not found locally in Ollama. Attempting automatic model pull...", model_name)
+                try:
+                    pull_resp = client.post(
+                        "/api/pull",
+                        json={"name": model_name, "stream": False},
+                        timeout=PULL_TIMEOUT_SECONDS,
+                    )
+                    if pull_resp.status_code == 200:
+                        logger.info("Model '%s' successfully pulled. Resuming generation...", model_name)
+                        response = client.post("/api/generate", json=payload)
+                    else:
+                        logger.error("Failed to pull model '%s' from Ollama: %s", model_name, pull_resp.text)
+                        raise RuntimeError(
+                            f"ollama request failed: Model '{model_name}' not found locally and auto-pull failed. "
+                            f"To pull manually, run 'ollama pull {model_name}'."
+                        )
+                except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as pull_err:
+                    logger.error("Network error while pulling model '%s': %s", model_name, pull_err)
+                    raise RuntimeError(
+                        f"ollama request failed: Model '{model_name}' not found locally and cannot be pulled while offline. "
+                        f"Run 'ollama pull {model_name}'."
+                    ) from pull_err
 
-    if response.status_code != 200:
-        logger.error("Ollama request failed: %s %s", response.status_code, response.text)
-        raise RuntimeError("ollama request failed")
+            if response.status_code != 200:
+                logger.error("Ollama request failed: %s %s", response.status_code, response.text)
+                raise RuntimeError(f"ollama request failed: {response.status_code} {response.text.strip()}")
 
-    data = response.json()
-    content = data.get("response", "").strip()
-    return clean_llm_output(content)
+            data = response.json()
+            content = data.get("response", "").strip()
+            return clean_llm_output(content)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        logger.error("Could not connect to Ollama at %s: %s", base_url, e)
+        raise RuntimeError(
+            f"ollama request failed: Could not connect to local Ollama server at {base_url}. Ensure Ollama is running ('ollama serve')."
+        ) from e
 
 
 def summarize_transcript(

@@ -231,7 +231,7 @@ def main(
         help="Batch size for faster-whisper transcription. Higher values increase transcription speed but consume significantly more RAM/VRAM memory (Default: 2).",
     ),
     llm_model: str | None = typer.Option(None, "--llm-model"),
-    language: str = typer.Option("pt", "--language"),
+    language: str = typer.Option("pt", "--language", help="Summary/transcription language ('pt', 'en', 'es', etc., or 'auto' for automatic speech detection)."),
     video: bool = typer.Option(
         False,
         "--video",

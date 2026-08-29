@@ -95,9 +95,10 @@ def transcribe_file(
     )
     batched_model = BatchedInferencePipeline(model=model)
 
+    whisper_language = None if (language and language.lower() == "auto") else language
     segments, info = batched_model.transcribe(
         str(audio_path),
-        language=language,
+        language=whisper_language,
         vad_filter=True,
         word_timestamps=False,
         batch_size=batch_size,
