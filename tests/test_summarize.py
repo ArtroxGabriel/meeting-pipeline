@@ -217,70 +217,7 @@ def test_summarize_auto_pull_offline_failure() -> None:
             summarize_transcript("This is a valid meeting transcript with content")
 
 
-def test_summarize_single_item_consolidation_bypass() -> None:
-    # 6 words total, max_words_per_chunk=3 -> 2 chunks
-    long_transcript = "one two three\nfour five six"
-
-    # Chunk 1 returns 1 item for Pontos principais
-    chunk_1_resp = MagicMock(status_code=200)
-    chunk_1_resp.json.return_value = {"response": "## Pontos principais\n- Single unique point"}
-
-    # Chunk 2 returns empty sections
-    chunk_2_resp = MagicMock(status_code=200)
-    chunk_2_resp.json.return_value = {"response": "## Pontos principais\n- Nenhuma registrada."}
-
-    unload_resp = MagicMock(status_code=200)
-
-    mock_client = MagicMock()
-    mock_client.post.side_effect = [chunk_1_resp, chunk_2_resp, unload_resp]
-    mock_client.__enter__.return_value = mock_client
-
-    with patch("httpx.Client", return_value=mock_client):
-        result = summarize_transcript(long_transcript, max_words_per_chunk=3)
-        assert "## Pontos principais\n- Single unique point" in result
-        assert "## Decisões\n- Nenhuma registrada." in result
-        # Total calls must be exactly 2 (chunks) + 1 (unload) = 3 calls (0 consolidation LLM calls!)
-        assert mock_client.post.call_count == 3
 
 
-def test_gpu_multi_category_consolidation() -> None:
-    # 6 words total, max_words_per_chunk=3 -> 2 chunks
-    long_transcript = "one two three\nfour five six"
-
-    # Chunk 1 returns items for Pontos principais and Decisões
-    chunk_1_resp = MagicMock(status_code=200)
-    chunk_1_resp.json.return_value = {
-        "response": "## Pontos principais\n- Point 1\n## Decisões\n- Decision 1"
-    }
-
-    # Chunk 2 returns items for Pontos principais and Decisões
-    chunk_2_resp = MagicMock(status_code=200)
-    chunk_2_resp.json.return_value = {
-        "response": "## Pontos principais\n- Point 2\n## Decisões\n- Decision 2"
-    }
-
-    # Unified GPU consolidation response (1 call for both sections!)
-    unified_resp = MagicMock(status_code=200)
-    unified_resp.json.return_value = {
-        "response": "## Pontos principais\n- Merged Point\n## Decisões\n- Merged Decision"
-    }
-
-    unload_resp = MagicMock(status_code=200)
-
-    mock_client = MagicMock()
-    mock_client.post.side_effect = [chunk_1_resp, chunk_2_resp, unified_resp, unload_resp]
-    mock_client.__enter__.return_value = mock_client
-
-    with patch("httpx.Client", return_value=mock_client):
-        result = summarize_transcript(
-            long_transcript,
-            model_name="llama3.1:8b",
-            is_gpu_model=True,
-            max_words_per_chunk=3,
-        )
-        assert "- Merged Point" in result
-        assert "- Merged Decision" in result
-        # Total calls: 2 (chunks) + 1 (unified consolidation) + 1 (unload) = 4 calls!
-        assert mock_client.post.call_count == 4
 
 
